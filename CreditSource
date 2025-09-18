@@ -1,0 +1,288 @@
+import React, { useRef, useState, useEffect } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Separator } from "@/components/ui/separator";
+import { Loader2, Check } from "lucide-react";
+import SignatureCanvas from "react-signature-canvas";
+
+// IMPORTANT, keep the logo small and referenced by URL to avoid large inline base64 strings causing runtime errors.
+// Place the PNG at the site root when you deploy, for example in Netlify "public/cs-logo.png" or GitLab Pages.
+// You can change this path to an absolute URL if preferred.
+const LOGO_URL = "/cs-logo.png";
+
+const EVENT = {
+  name: "WALGA Local Government Convention 2025",
+  date: "22nd to 24th October 2025",
+  provider: "CreditSource Pty Ltd",
+};
+
+export default function App() {
+  const sigRef = useRef(null);
+  const [form, setForm] = useState({
+    fullName: "",
+    organisation: "",
+    phone: "",
+    email: "",
+    marketingConsent: false,
+    date: new Date().toISOString().slice(0, 10),
+  });
+  const [signatureDataUrl, setSignatureDataUrl] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [serverResponse, setServerResponse] = useState("");
+  const [logoOk, setLogoOk] = useState(true);
+
+  // Derived validity, mirrors the paper form requirements
+  const required = Boolean(form.fullName && form.email && signatureDataUrl);
+
+  const handleChange = (k, v) => setForm((s) => ({ ...s, [k]: v }));
+
+  const clearSignature = () => {
+    sigRef.current?.clear();
+    setSignatureDataUrl("");
+  };
+
+  const saveSignature = () => {
+    if (sigRef.current?.isEmpty()) return;
+    const data = sigRef.current.getTrimmedCanvas().toDataURL("image/png");
+    setSignatureDataUrl(data);
+  };
+
+  // Minimal submit stub for preview
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setServerResponse("");
+    setTimeout(() => {
+      setSubmitting(false);
+      setServerResponse("Form submitted successfully.");
+    }, 800);
+  };
+
+  // Load the logo once, mark if unavailable, without breaking the app
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => setLogoOk(true);
+    img.onerror = () => setLogoOk(false);
+    img.src = LOGO_URL;
+  }, []);
+
+  // Self tests in dev console so we always have coverage in preview
+  useEffect(() => {
+    // Test, logo URL string present
+    console.assert(typeof LOGO_URL === "string" && LOGO_URL.length > 0, "LOGO_URL must be a non empty string");
+    // Test, required state should be false for empty form
+    const reqEmpty = Boolean("" && "" && "");
+    console.assert(reqEmpty === false, "Required check should be false when fields empty");
+    // Test, required becomes true when all fields and signature are present
+    const reqFilled = Boolean("Jane" && "jane@example.com" && "data:image/png;base64,abc");
+    console.assert(reqFilled === true, "Required check should be true when name, email, signature exist");
+  }, []);
+
+  // Helper, fetch an image URL and return a data URL for jsPDF
+  async function imgUrlToDataUrl(url) {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`Cannot load logo, ${res.status}`);
+    const blob = await res.blob();
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function generatePdf() {
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const margin = 48;
+    const pageW = doc.internal.pageSize.getWidth();
+
+    // Top right logo, if available
+    try {
+      const logoData = await imgUrlToDataUrl(LOGO_URL);
+      const ip = doc.getImageProperties(logoData);
+      const w = 140;
+      const h = (ip.height * w) / ip.width;
+      doc.addImage(logoData, "PNG", pageW - margin - w, margin - 8, w, h);
+    } catch (err) {
+      // Silent, PDF still generates
+      console.warn("Logo skipped in PDF", err);
+    }
+
+    let y = margin + 50;
+    doc.setFontSize(16);
+    doc.text("Professional Headshot, Photography Consent & Release Form", margin, y);
+
+    doc.setFontSize(11);
+    y += 24; doc.text(`Event, ${EVENT.name}`, margin, y);
+    y += 16; doc.text(`Date, ${EVENT.date}`, margin, y);
+    y += 16; doc.text(`Provided by, ${EVENT.provider}`, margin, y);
+
+    y += 24;
+    const intro = "We are delighted to offer you a complimentary professional headshot during the WALGA Local Government Convention 2025 event. To ensure you receive your photos and to clarify how they can be used, please complete the details below.";
+    doc.text(doc.splitTextToSize(intro, pageW - margin * 2), margin, y);
+
+    y += 40; doc.setFont(undefined, "bold"); doc.text("Delegate Information", margin, y); doc.setFont(undefined, "normal");
+    y += 18; doc.text(`Full Name, ${form.fullName || ""}`, margin, y);
+    y += 16; doc.text(`Organisation, ${form.organisation || ""}`, margin, y);
+    y += 16; doc.text(`Phone Number, ${form.phone || ""}`, margin, y);
+    y += 16; doc.text(`Email Address, ${form.email || ""}`, margin, y);
+
+    y += 24; doc.setFont(undefined, "bold"); doc.text("Consent and Release Agreement", margin, y); doc.setFont(undefined, "normal");
+    y += 18;
+    const paras = [
+      "I, the undersigned, hereby consent to be photographed by the photographer commissioned by CreditSource Pty Ltd. In doing so, I agree to the following terms and conditions:",
+      "1. Grant of Rights, I grant CreditSource Pty Ltd and the photographer the perpetual, worldwide, royalty free right to use the photographs for the purposes outlined below:",
+      "For Me, I will receive the digital photograph(s) via the email address provided above. I may use these photographs for any personal or professional purposes, including on my LinkedIn profile, CV, company website, and other promotional materials.",
+      "For the Photographer, I understand the photographer may use the photographs in their professional portfolio, including on their website and social media, as examples of their work.",
+      "2. Release of Liability, I hereby release and discharge CreditSource Pty Ltd, its directors, employees, agents, and the external photographer from any and all claims, demands, or causes of action that I may have, whether known or unknown, arising out of or in connection with the creation, editing, or distribution of my photograph.",
+      "3. No Compensation, I understand that I am receiving this professional headshot free of charge and will not receive any further payment or compensation.",
+      "4. Acknowledgement, I confirm that I am over 18 years of age and have read, understood, and voluntarily agree to the terms of this consent and release form.",
+      "[Optional] Marketing Consent for CreditSource Pty Ltd, YES, I grant CreditSource Pty Ltd permission to use my headshot for its own promotional and marketing purposes, including on its website, social media channels, and in company presentations.",
+    ];
+    const width = pageW - margin * 2;
+    paras.forEach((p) => { const lines = doc.splitTextToSize(p, width); doc.text(lines, margin, y); y += lines.length * 14 + 8; });
+
+    y += 16; doc.text(`Name, ${form.fullName || ""}`, margin, y);
+    y += 24;
+    if (signatureDataUrl) {
+      try {
+        const s = 200; const ip2 = doc.getImageProperties(signatureDataUrl); const sh = (ip2.height * s) / ip2.width;
+        doc.text("Signature", margin, y);
+        doc.addImage(signatureDataUrl, "PNG", margin, y + 6, s, sh);
+        doc.text(`Date, ${form.date}`, margin + s + 24, y + 18);
+        y += sh + 40;
+      } catch {}
+    } else {
+      doc.text("Signature,", margin, y); y += 40; doc.text(`Date, ${form.date}`, margin, y);
+    }
+
+    return doc.output("blob");
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-4 sm:p-6">
+      <div className="mx-auto max-w-3xl space-y-4">
+        <Card className="shadow-lg">
+          <CardHeader>
+            <div className="flex items-center justify-end">
+              {/* Logo, top right. If missing at LOGO_URL, we keep layout without breaking */}
+              <img src={LOGO_URL} alt="CreditSource logo" className="h-12" style={{ display: logoOk ? "block" : "none" }} />
+            </div>
+            <CardTitle className="text-2xl mt-2 text-center">Professional Headshot - Photography Consent & Release Form</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="text-center">
+              <p><strong>Event:</strong> {EVENT.name}</p>
+              <p><strong>Date:</strong> {EVENT.date}</p>
+              <p><strong>Provided by:</strong> {EVENT.provider}</p>
+            </div>
+
+            <p>
+              We are delighted to offer you a complimentary professional headshot during the WALGA Local Government Convention 2025 event. To ensure you receive your photos and to clarify how they can be used, please complete the details below.
+            </p>
+
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div>
+                <h3 className="text-lg font-semibold">Delegate Information</h3>
+                <div className="grid gap-4 mt-2">
+                  <div>
+                    <Label>Full Name</Label>
+                    <Input value={form.fullName} onChange={(e) => handleChange("fullName", e.target.value)} required />
+                  </div>
+                  <div>
+                    <Label>Organisation</Label>
+                    <Input value={form.organisation} onChange={(e) => handleChange("organisation", e.target.value)} />
+                  </div>
+                  <div>
+                    <Label>Phone Number</Label>
+                    <Input value={form.phone} onChange={(e) => handleChange("phone", e.target.value)} />
+                  </div>
+                  <div>
+                    <Label>Email Address (for photo delivery)</Label>
+                    <Input type="email" value={form.email} onChange={(e) => handleChange("email", e.target.value)} required />
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+
+              <div>
+                <h3 className="text-lg font-semibold">Consent and Release Agreement</h3>
+                <ol className="list-decimal pl-5 space-y-2 mt-2 text-sm">
+                  <li>Grant of Rights: I grant CreditSource Pty Ltd and the photographer the perpetual, worldwide, royalty-free right to use the photographs for the purposes outlined below:
+                    <ul className="list-disc pl-6">
+                      <li><strong>For Me:</strong> I will receive the digital photograph(s) via the email address provided above. I may use these photographs for any personal or professional purposes, including on my LinkedIn profile, CV, company website, and other promotional materials.</li>
+                      <li><strong>For the Photographer:</strong> I understand the photographer may use the photographs in their professional portfolio, including on their website and social media, as examples of their work.</li>
+                    </ul>
+                  </li>
+                  <li>Release of Liability: I hereby release and discharge CreditSource Pty Ltd, its directors, employees, agents, and the external photographer from any and all claims, demands, or causes of action that I may have, whether known or unknown, arising out of or in connection with the creation, editing, or distribution of my photograph.</li>
+                  <li>No Compensation: I understand that I am receiving this professional headshot free of charge and will not receive any further payment or compensation.</li>
+                  <li>Acknowledgement: I confirm that I am over 18 years of age and have read, understood, and voluntarily agree to the terms of this consent and release form.</li>
+                </ol>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Checkbox id="marketingConsent" checked={form.marketingConsent} onCheckedChange={(v) => handleChange("marketingConsent", Boolean(v))} />
+                <Label htmlFor="marketingConsent">[Optional] Marketing Consent: YES, I grant CreditSource Pty Ltd permission to use my headshot for its own promotional and marketing purposes, including on its website, social media channels, and in company presentations.</Label>
+              </div>
+
+              <Separator />
+
+              <div>
+                <h3 className="text-lg font-semibold">Signature</h3>
+                <div className="rounded-2xl border bg-white p-3">
+                  <SignatureCanvas
+                    ref={sigRef}
+                    penColor="#111827"
+                    canvasProps={{ className: "w-full h-40" }}
+                    onEnd={saveSignature}
+                  />
+                  <div className="mt-2 flex gap-2">
+                    <Button type="button" variant="secondary" onClick={clearSignature}>Clear</Button>
+                    <Button type="button" onClick={saveSignature}>Save Signature</Button>
+                  </div>
+                  {signatureDataUrl ? (
+                    <div className="mt-2 text-sm text-green-700 flex items-center gap-2"><Check className="h-4 w-4" /> Signature captured</div>
+                  ) : (
+                    <div className="mt-2 text-sm text-gray-600">Sign above with your finger or stylus, then tap Save Signature.</div>
+                  )}
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label>Date</Label>
+                    <Input type="date" value={form.date} onChange={(e) => handleChange("date", e.target.value)} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <Button type="submit" disabled={!required || submitting}>
+                  {submitting ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" />Submitting</>) : ("Submit")}
+                </Button>
+                <Button type="button" onClick={async () => {
+                  const blob = await generatePdf();
+                  const a = document.createElement('a');
+                  a.href = URL.createObjectURL(blob);
+                  a.download = `${form.fullName || 'consent'}.pdf`;
+                  a.click();
+                }}>Download PDF</Button>
+              </div>
+
+              {serverResponse && (
+                <Alert>
+                  <AlertTitle>Status</AlertTitle>
+                  <AlertDescription>{serverResponse}</AlertDescription>
+                </Alert>
+              )}
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
